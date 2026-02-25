@@ -1,0 +1,158 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scraper-service
+  namespace: news-scraper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: news-scraper
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+      labels:
+        app: news-scraper
+    spec:
+      containers:
+      - name: scraper
+        image: news-scraper:latest
+        imagePullPolicy: Never
+        env:
+        - name: REDPANDA_BROKERS
+          value: "redpanda.news-redpanda.svc.cluster.local:29092"
+        - name: SCRAPE_INTERVAL
+          value: "120"
+        ports:
+        - containerPort: 8081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: processor-service
+  namespace: news-processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: news-processor
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: "/metrics"
+      labels:
+        app: news-processor
+    spec:
+      volumes:
+      - name: secret-volume
+        emptyDir: {}
+      initContainers:
+      - name: vault-init
+        image: hashicorp/vault:1.15
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          # Authenticate with Vault
+          export KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          export VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login role=newsflow-role jwt=$KUBE_TOKEN)
+          # Fetch secret
+          vault kv get -field=dsn secret/newsflow/mysql > /vault/secrets/dsn
+        env:
+        - name: VAULT_ADDR
+          value: "http://vault.vault.svc.cluster.local:8200"
+        volumeMounts:
+        - name: secret-volume
+          mountPath: /vault/secrets
+      containers:
+      - name: processor
+        image: news-processor:latest
+        imagePullPolicy: Never
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          export MYSQL_DSN=$(cat /vault/secrets/dsn)
+          ./processor
+        env:
+        - name: REDPANDA_BROKERS
+          value: "redpanda.news-redpanda.svc.cluster.local:29092"
+        volumeMounts:
+        - name: secret-volume
+          mountPath: /vault/secrets
+        ports:
+        - containerPort: 8082
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  namespace: news-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: news-api
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+      labels:
+        app: news-api
+    spec:
+      volumes:
+      - name: secret-volume
+        emptyDir: {}
+      initContainers:
+      - name: vault-init
+        image: hashicorp/vault:1.15
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          # Authenticate with Vault
+          export KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          export VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login role=newsflow-role jwt=$KUBE_TOKEN)
+          # Fetch secret
+          vault kv get -field=dsn secret/newsflow/mysql > /vault/secrets/dsn
+        env:
+        - name: VAULT_ADDR
+          value: "http://vault.vault.svc.cluster.local:8200"
+        volumeMounts:
+        - name: secret-volume
+          mountPath: /vault/secrets
+      containers:
+      - name: api
+        image: news-api:latest
+        imagePullPolicy: Never
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          export MYSQL_DSN=$(cat /vault/secrets/dsn)
+          ./api
+        env:
+        - name: PORT
+          value: "8080"
+        volumeMounts:
+        - name: secret-volume
+          mountPath: /vault/secrets
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+  namespace: news-api
+spec:
+  type: NodePort
+  ports:
+  - port: 8080
+    targetPort: 8080
+    nodePort: 30080
+  selector:
+    app: news-api

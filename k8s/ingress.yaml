@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: newsflow-ingress
+  namespace: news-api
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /user/
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 8080
+      - path: /user
+        pathType: Exact
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 8080

@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda
+  namespace: news-redpanda
+spec:
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+    spec:
+      containers:
+      - name: redpanda
+        image: docker.redpanda.com/redpandadata/redpanda:v24.1.1
+        command:
+        - /bin/sh
+        - -c
+        - |
+          rpk redpanda start \
+          --smp 1 \
+          --memory 512M \
+          --overprovisioned \
+          --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092 \
+          --advertise-kafka-addr PLAINTEXT://redpanda.news-redpanda.svc.cluster.local:29092,OUTSIDE://localhost:9092
+        ports:
+        - containerPort: 9092
+          name: outside
+        - containerPort: 29092
+          name: plaintext
+        livenessProbe:
+          exec:
+            command: ["rpk", "cluster", "health"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  namespace: news-redpanda
+spec:
+  ports:
+  - port: 29092
+    name: plaintext
+  - port: 9092
+    name: outside
+  selector:
+    app: redpanda
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redpanda-init
+  namespace: news-redpanda
+spec:
+  template:
+    spec:
+      containers:
+      - name: redpanda-init
+        image: docker.redpanda.com/redpandadata/redpanda:v24.1.1
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Waiting for redpanda..."
+          until rpk topic list --brokers redpanda.news-redpanda.svc.cluster.local:29092; do sleep 2; done;
+          rpk topic create raw-articles --brokers redpanda.news-redpanda.svc.cluster.local:29092 -r 1 -p 3 || true;
+          echo "Topics ready"
+      restartPolicy: OnFailure
