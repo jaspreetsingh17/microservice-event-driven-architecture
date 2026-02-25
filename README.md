@@ -115,6 +115,8 @@ Services expose these custom Prometheus metrics:
 
 Prometheus auto-discovers targets through pod annotations — any pod with `prometheus.io/scrape: "true"` gets picked up.
 
+![Grafana Dashboard](images/grafana.png)
+
 ## How secrets work
 
 Didn't want to put DB credentials in env vars or ConfigMaps, so services that talk to MySQL use Vault with Kubernetes auth. The flow is:
@@ -126,3 +128,5 @@ Didn't want to put DB credentials in env vars or ConfigMaps, so services that ta
 5. Main container reads it from there on startup
 
 The Vault policy (`newsflow-read.hcl`) only gives read access to `secret/newsflow/*`.
+
+![Vault UI](images/vault.png)
